@@ -1,3 +1,4 @@
+
 pipeline {
 
     agent any
@@ -8,8 +9,6 @@ pipeline {
         AWS_ACCOUNT_ID   = '786830914319'
         ECR_REPO_NAME    = 'rangesh_repository_for_springboot'
         EKS_CLUSTER_NAME = 'rangesh-eks-cluster'
-
-        
 
         IMAGE_TAG       = "${BUILD_NUMBER}"
         ECR_REGISTRY    = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
@@ -62,6 +61,7 @@ pipeline {
 
         stage('5. Build Docker Image') {
             steps {
+
                 echo "==== BUILDING ${FULL_IMAGE_NAME}:${IMAGE_TAG} ===="
 
                 sh """
@@ -77,24 +77,15 @@ pipeline {
 
                 echo '==== PUSHING IMAGE TO ECR ===='
 
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: "${AWS_CREDENTIALS_ID}",
-                        usernameVariable: 'AWS_ACCESS_KEY_ID',
-                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
-                    )
-                ]) {
+                sh """
+                    aws ecr get-login-password \
+                      --region ${AWS_REGION} | \
+                    docker login \
+                      --username AWS \
+                      --password-stdin ${ECR_REGISTRY}
 
-                    sh """
-                        aws ecr get-login-password \
-                          --region ${AWS_REGION} | \
-                        docker login \
-                          --username AWS \
-                          --password-stdin ${ECR_REGISTRY}
-
-                        docker push ${FULL_IMAGE_NAME}:${IMAGE_TAG}
-                    """
-                }
+                    docker push ${FULL_IMAGE_NAME}:${IMAGE_TAG}
+                """
             }
         }
 
@@ -103,35 +94,34 @@ pipeline {
 
                 echo '==== DEPLOYING TO EKS ===='
 
-        {
+                sh """
+                    aws eks update-kubeconfig \
+                      --region ${AWS_REGION} \
+                      --name ${EKS_CLUSTER_NAME}
 
-                    sh """
-                        aws eks update-kubeconfig \
-                          --region ${AWS_REGION} \
-                          --name ${EKS_CLUSTER_NAME}
+                    sed -i "s|image: IMAGE_PLACEHOLDER|image: ${FULL_IMAGE_NAME}:${IMAGE_TAG}|g" \
+                      k8s/deployment.yaml
 
-                        sed -i "s|image: IMAGE_PLACEHOLDER|image: ${FULL_IMAGE_NAME}:${IMAGE_TAG}|g" \
-                          k8s/deployment.yaml
+                    kubectl apply -f k8s/namespace.yaml
 
-                        kubectl apply -f k8s/namespace.yaml
+                    kubectl apply -f k8s/deployment.yaml
 
-                        kubectl apply -f k8s/deployment.yaml
+                    kubectl apply -f k8s/service.yaml
 
-                        kubectl apply -f k8s/service.yaml
+                    kubectl apply -f k8s/ingress.yaml
 
-                        kubectl apply -f k8s/ingress.yaml
-
-                        kubectl rollout status \
-                          deployment/springboot-app \
-                          -n devops \
-                          --timeout=180s
-                    """
-                }
+                    kubectl rollout status \
+                      deployment/springboot-app \
+                      -n devops \
+                      --timeout=180s
+                """
             }
         }
 
         stage('8. Verify Deployment') {
             steps {
+
+                echo '==== VERIFYING DEPLOYMENT ===='
 
                 sh """
                     kubectl get pods -n devops
@@ -174,3 +164,4 @@ pipeline {
         }
     }
 }
+
